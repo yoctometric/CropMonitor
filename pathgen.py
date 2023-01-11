@@ -1,5 +1,8 @@
 # A module containing code that will return a set of points covering an arbitrary area
 
+from math import tan, cos, pi, degrees, radians
+
+
 class Rectangle():
     """
     A class representing a simple rectangle for use with the flood-fill algorithm
@@ -58,6 +61,20 @@ class Rectangle():
         return False
 
 
+    def overlaps_polygon(self, polygon: list) -> bool:
+        """
+        Returns true if the rectangle intersects or contains the polygon
+        """
+        for i in range(len(polygon)):
+            j = i + 1
+            j = j % len(polygon)
+            intersects = self.intersects(polygon[i], polygon[j])
+            if intersects:
+                return True
+        
+        return False
+
+
     def __str__(self) -> str:
         return f"({self.center[0]}, {self.center[1]})"
 
@@ -82,12 +99,20 @@ class Workplace():
     Reference: https://core.ac.uk/download/pdf/74476273.pdf
     """
 
-    def __init__(self, fov: tuple, altitude: float, perimeter: list):
+    def __init__(self, start_pos: tuple, fov: tuple, altitude: float, perimeter: list):
         """
         Segments the workplace grid based on the FOV and altitude the drone will fly at
         Uses Approximate Cellular Decomposition to do so
         """
-        pass
+        
+        # get the width and height of the capture rectangles from fov in meters
+        size = self.photo_area_from_fov(fov, altitude, start_pos[1])
+
+        # decompose the area into a grid
+        self.grid = self.flood_fill(size, perimeter)
+
+        # run wavefront to get a full coverage path
+        self.path = self.wavefront(start_pos)
 
 
     def flood_fill(self, size: tuple, perimeter: list) -> list:
@@ -107,6 +132,11 @@ class Workplace():
         # 2. initialize the center rectangle
         unspent = [Rectangle(center, size, (0, 0))]
         spent = []
+
+        # handle case where initial rectangle already fully encompasses perimeter
+        if unspent[0].overlaps_polygon(perimeter):
+            spent = [unspent[0]]
+            unspent = []
 
         # 3. While "unspent" rectangles exist in the list:
         #   for each unspent rectangle, replicate to adjacent tiles and mark as spent
@@ -129,13 +159,7 @@ class Workplace():
                         continue    # if the rect is on an occupied space, dont bother dealing with it
                     
                     # check to see if the rect is overlapping a polygon edge
-                    for i in range(len(perimeter)):
-                        j = i + 1
-                        j = j % len(perimeter)
-                        intersects = new_rect.intersects(perimeter[i], perimeter[j])
-                        if intersects:
-                            new_rect.border = True
-                            break
+                    new_rect.border = new_rect.overlaps_polygon(perimeter)
 
                     # if the rect does not intersect but the rect that spawned it does, then this rect is outside the polygon
                     if (not new_rect.border) and rect.border:
@@ -152,15 +176,34 @@ class Workplace():
         return spent
 
 
-    def wavefront():
+    def wavefront(self, home_pos: tuple):
         """
         Runs the "wavefront" algorithm on the segmented workplace in order to generate a full coverage
         flight path.
+        home_pos - the initial position of the drone
         """
 
     
-    def wavefront_cubic():
+    def wavefront_cubic(self):
         # TODO: implement if interested
         """
         Generates a path using the wavefront algorithm and smooths it with cubic bezier curves
         """
+
+    
+    def photo_area_from_fov(self, fov: tuple, altitude: float, latitude) -> tuple:
+        """
+        Takes the camera fov (degrees) and drone altitude (meters)
+        and returns the photo area coverage in decimal degrees
+        """
+        w = 2*altitude * tan(radians(fov[0]/2))
+        h = 2*altitude * tan(radians(fov[1]/2))
+        print(f"Photo area (m): ({w}, {h})")
+
+        # https://stackoverflow.com/questions/25237356/convert-meters-to-decimal-degrees
+        # convert meters to decimal degrees
+        w = w / (111.32 * 1000 * cos(radians(latitude)))
+        h = h / (111.32 * 1000 * cos(radians(latitude)))
+        print(f"Photo area (dd): ({w}, {h})")
+
+        return (w, h)

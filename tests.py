@@ -37,11 +37,16 @@ class TestWorkPlace(unittest.TestCase):
                 (43.679122731145114, -70.26230086305941), (43.67906176450213, -70.26235505526479),
                 (43.67959304316595, -70.2647214482337), (43.679366597097584, -70.26614850964243), 
                 (43.67896160488272, -70.26780438258504)]
-        workplace = Workplace((16, 9), 20.5, perimeter)
+        workplace = Workplace(
+            start_pos=(43.679782271987395, -70.2692889874136), 
+            fov=(62.2, 48.8),   # the rpi cam 2 FOV 
+            altitude=20.5, 
+            perimeter=perimeter
+        )
 
-        rects = workplace.flood_fill((0.0001, 0.0001), perimeter)
-        for r in rects:
-            print(r)
+        #rects = workplace.flood_fill((0.0001, 0.0001), perimeter)
+        #for r in rects:
+        #    print(r)
 
 
 
