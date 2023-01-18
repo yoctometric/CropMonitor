@@ -26,7 +26,7 @@ if __name__ == "__main__":
         altitude=20, 
         perimeter=perimeter)
 
-    rects = workplace.grid
+    rects = workplace.rectangles
     
     end = datetime.now()
     print(f"finished in {end - start}")
@@ -39,9 +39,21 @@ if __name__ == "__main__":
     rects_y = [rect.center[1] for rect in rects]
 
 
-    plt.figure(figsize=(8, 8))
-    plt.axis('equal')
-    plt.fill(per_x, per_y)
-    plt.scatter(rects_x, rects_y, c='red', linewidths=0.1)
-    plt.title("Decomposed Payson Park")
-    plt.show()
+    # get the path as well
+    path = workplace.path
+    path_x = [rect.center[0] for rect in path]
+    path_y = [rect.center[1] for rect in path]
+
+
+    
+    while True:
+        
+        for r in path:
+            plt.figure(figsize=(8, 8))
+            plt.axis('equal')
+            plt.fill(per_x, per_y)  # boundaries
+            plt.scatter(rects_x, rects_y, c='pink', linewidths=0.1)  # points
+            plt.plot(path_x, path_y, 'purple')
+            plt.plot([r.center[0]], [r.center[1]], 'magenta', marker='o')
+            plt.title("Decomposed Payson Park")
+            plt.show()

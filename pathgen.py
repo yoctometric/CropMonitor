@@ -10,6 +10,7 @@ class Rectangle():
     def __init__(self, center: tuple, size: tuple, index: tuple) -> None:
         self.center = center
         self.size = size
+        self.yaw = 0   # used by drone for mission planning
         self.index = index  # The integer tuple index of the rectangle in the decomposed grid
         self.border = False # Is this rectangle intersecting the perimeter
 
@@ -108,11 +109,15 @@ class Workplace():
         # get the width and height of the capture rectangles from fov in meters
         size = self.photo_area_from_fov(fov, altitude, start_pos[1])
 
-        # decompose the area into a grid
-        self.grid = self.flood_fill(size, perimeter)
+        # decompose the area into a list of rectangles
+        self.rectangles = self.flood_fill(size, perimeter)
 
-        # run wavefront to get a full coverage path
-        self.path = self.wavefront(start_pos)
+        # run wavefront to get a potential field
+        self.potential_field, self.grid = self.wavefront(start_pos, self.rectangles)
+        # self.print_grid(self.potential_field)
+
+        # finally, get the coverage path
+        self.path = self.calc_coverage_path(self.potential_field, self.grid)
 
 
     def flood_fill(self, size: tuple, perimeter: list) -> list:
@@ -176,19 +181,179 @@ class Workplace():
         return spent
 
 
-    def wavefront(self, home_pos: tuple):
+    def wavefront(self, home_pos: tuple, rectangles: list):
         """
-        Runs the "wavefront" algorithm on the segmented workplace in order to generate a full coverage
-        flight path.
+        Runs the "wavefront" algorithm on the segmented workplace in order to generate a potential
+        field for use in calculating a coverage path
         home_pos - the initial position of the drone
+
+        returns the rectangles as a 2d array, and a matching potential field of ints
         """
 
-    
-    def wavefront_cubic(self):
-        # TODO: implement if interested
+        # First, take the list of rectangles and turn it into a 2d grid based on
+        #   1. Find the min x and y 'indices' of the rectangles
+        #   2. Use those values to adjust their 'index' member variable into a real 2d grid index
+        #   3. Assign the rectangles to that point in the grid
+
+        x_ind = [r.index[0] for r in rectangles]
+        y_ind = [r.index[1] for r in rectangles]
+        min_ind = (min(x_ind), min(y_ind))
+        max_ind = (max(x_ind), max(y_ind))
+        w = max_ind[0] - min_ind[0] + 1
+        h = max_ind[1] - min_ind[1] + 1
+
+        # initialize an empty grid
+        grid = [[None] * h for i in range(w)]
+
+        # now put rectangles in their proper positions
+        for r in rectangles:
+            x = r.index[0] - min_ind[0]
+            y = r.index[1] - min_ind[1]
+
+            # overwrite the rectangle's index here
+            r.index = (x, y)
+
+            grid[x][y] = r
+
+        # Now for the wavefront algorithm
+        # reference: https://github.com/czhanacek/python-wavefront/blob/master/wavefront.py
+        #   1. Find the cell closest to the home position and make it the goal cell
+        #   2. Set the cost of the goal cell and propagate out, increasing the cost of each cell
+        #   3. Create path by moving to the most expensive cells first. This will result in full coverage
+
+        # find closest cell
+        closest_d = None
+        goal_r = None
+        for r in rectangles:
+            d_squared = pow(r.center[0] - home_pos[0], 2) - pow(r.center[1] - home_pos[1], 2)  
+            if closest_d is None:
+                closest_d = d_squared
+                goal_r = r
+            elif d_squared < closest_d:
+                closest_d = d_squared
+                goal_r = r
+
+        # this section re-uses a copy of the rectangle grid as a cost grid
+        cost_grid = [row[:] for row in grid]
+        heap = []
+        new_heap = []
+        x, y = goal_r.index
+
+        # mark nodes around the goal with 3
+        moves = [(x + 1, y), (x - 1, y), (x, y - 1), (x, y + 1)]
+        for move in moves:
+            if self.get_grid(cost_grid, move) is None:
+                continue
+
+            cost_grid = self.set_grid(cost_grid, move, 3)
+            heap.append(move)
+        
+        for wave in range(4, 10000):
+            if len(heap) == 0:
+                # last wave, no more moves needed.
+                break
+
+            while(len(heap) > 0):
+                position = heap.pop()
+                (x, y) = position
+                moves = [(x + 1, y), (x - 1, y), (x, y - 1), (x, y + 1)]
+
+                for move in moves:
+                    point = self.get_grid(cost_grid, move)
+                    if point is not None and isinstance(point, Rectangle):
+                        cost_grid = self.set_grid(cost_grid, move, wave)
+                        new_heap.append(move)
+
+            heap = new_heap
+            new_heap = []
+
+        return cost_grid, grid
+
+                    
+    def calc_coverage_path(self, potential_field: list, cell_grid: list) -> list:
         """
-        Generates a path using the wavefront algorithm and smooths it with cubic bezier curves
+        Calculates a full coverage path based on the potential field, and
+        applies that path to the cell grid in order to return a path
         """
+        # 1. start at the cell with the highest potential
+        # 2. go to the nearest cell with the next highest potential
+        # 3. repeat until goal or dead end
+        #   if a dead end is hit, go backwards in the path until a new option appears
+        #   to do this, keep a stack representing the head of the search that pushes and pops,
+        #   and a list containing all visited cells
+
+        # lists of tuples representing grid indices
+        stack = []
+        visited = []
+
+        # find the index of the cell with the highest potential
+        highest_potential = (0, 0)
+        for x in range(len(potential_field)):
+            for y in range(len(potential_field[0])):
+                if potential_field[x][y] is None:
+                    continue
+                if potential_field[highest_potential[0]][highest_potential[1]] is None:
+                    highest_potential = (x, y)
+
+                if potential_field[highest_potential[0]][highest_potential[1]] < potential_field[x][y]:
+                    highest_potential = (x, y)
+
+        # the path is completed once the length of visited cells matches the number of valid cells in cell_grid
+        n_cells = 0
+        for row in cell_grid:
+            for y in row:
+                if y is not None:
+                    n_cells += 1
+        
+        position = highest_potential
+        stack.append(position)
+        visited.append(position)
+        while len(visited) != n_cells:
+            # print(position, potential_field[position[0]][position[1]], f':\n    stack:', stack, f'\n   visited:', visited)
+
+            # find the highest potential move from the current position
+            (x, y) = position
+            moves = [(x + 1, y), (x - 1, y), (x, y - 1), (x, y + 1)]
+            highest_potential = None
+            stuck = True
+            for move in moves:
+                # ignore places the search has already been
+                if move in visited:
+                    continue
+
+                # ignore moves outside the workspace
+                if self.get_grid(potential_field, move) is None:
+                    continue
+
+                # ignore moves trying to index outside the array
+                if self.get_grid(potential_field, move) == False:
+                    continue
+
+                if highest_potential is None:
+                    highest_potential = move
+                    stuck = False
+                if potential_field[move[0]][move[1]] > potential_field[position[0]][position[1]]:
+                    highest_potential = move
+
+            # if not stuck, append the move and continue
+            if not stuck:
+                position = highest_potential
+                stack.append(position)
+                visited.append(position)
+                continue
+
+            # however, if stuck is True, then there were no valid moves from here. So backtrack
+            if len(stack) >= 1:
+                position = stack.pop()
+            else:
+                raise AssertionError('Failed to find full coverage path')
+                
+        # now based on the visited indices, return the cells they correspond to
+        path = []
+        for index in visited:
+            path.append(cell_grid[index[0]][index[1]])
+
+        return path
 
     
     def photo_area_from_fov(self, fov: tuple, altitude: float, latitude) -> tuple:
@@ -198,12 +363,54 @@ class Workplace():
         """
         w = 2*altitude * tan(radians(fov[0]/2))
         h = 2*altitude * tan(radians(fov[1]/2))
-        print(f"Photo area (m): ({w}, {h})")
 
         # https://stackoverflow.com/questions/25237356/convert-meters-to-decimal-degrees
         # convert meters to decimal degrees
         w = w / (111.32 * 1000 * cos(radians(latitude)))
         h = h / (111.32 * 1000 * cos(radians(latitude)))
-        print(f"Photo area (dd): ({w}, {h})")
+        # print(f"Photo area (dd): ({w}, {h})")
 
         return (w, h)
+
+    
+    def set_grid(self, grid: list, index: tuple, value):
+        """
+        Sets a value in a 2d array 'grid' at index 'index'
+        """
+        if index[0] < 0 or index[0] >= len(grid):
+            return grid
+
+        if index[1] < 0 or index[1] >= len(grid[0]):
+            return grid
+        
+        grid[index[0]][index[1]] = value
+        return grid
+
+
+    def get_grid(self, grid: list, index: tuple):
+        """
+        Gets the value in a 2d array 'grid' at index 'index'
+        """
+        # print(index, f"{(len(grid), len(grid[0]))}")
+
+        if index[0] < 0 or index[0] >= len(grid):
+            return False
+
+        if index[1] < 0 or index[1] >= len(grid[0]):
+            return False
+
+        return grid[index[0]][index[1]]
+
+    
+    def print_grid(self, grid: list):
+        """
+        Prints a grid (for debugging)
+        """
+        for x in range(len(grid)):
+            line = ''
+            for y in range(len(grid[0])):
+                if grid[x][y] is None:
+                    line += '|--|'
+                else:
+                    line += f"({(grid[x][y]):02})"
+            print(line)
