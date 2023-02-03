@@ -14,7 +14,7 @@ def convert_hdr_to_pngs(hdrfilepath,
                         #  "1", "L;1", "L;2", "L;4", "L", "LA", "I", "I;16",
                         #  "P;1", "P;2", "P;4", "P", "RGB", "RGBA"
                         # You will have to add pngprops below
-                        pngmode = 'I;16', # One of the pillow supported modes
+                        pngmode = 'RGB', # One of the pillow supported modes
 
                         pngmode_props = {
                             'RGB': dict(
@@ -51,8 +51,9 @@ def convert_hdr_to_pngs(hdrfilepath,
             # if not 3 channels then 
             nc = imgint.shape[2]
             imgint = np.concatenate((imgint,
-                                     np.zeros((*imgint.shape, N-nc),
-                                             dtype=dtype)))
+                                     np.zeros((*imgint.shape[:2], N-nc),
+                                             dtype=dtype)),
+                                   axis=2)
         if N == 1:
             imgint = imgint.squeeze()
         Image.fromarray(imgint, mode=pngmode).save(
